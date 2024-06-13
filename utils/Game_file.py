@@ -67,6 +67,9 @@ class Game:
         self.images = self.db.get_active_images()
         self.current_image_pair = random.sample(self.images, 2)
         self.player_name = ""
+        self.match_count = 0
+        if 'reviewed_images' not in st.session_state:
+            st.session_state.reviewed_images = set()
         
     @staticmethod
     def display_game_page():
@@ -77,30 +80,84 @@ class Game:
         if player_name:
             game = Game()
             game.player_name = player_name
+            if 'match_count' not in st.session_state:
+                st.session_state.match_count = 0
+            if 'current_image_pair' not in st.session_state:
+                st.session_state.current_image_pair = game.current_image_pair
             Game.play_game(game)
     
     @staticmethod
     def play_game(game):
         """Main game loop to display images and capture player choices."""
-        st.write("Click the image you like better:")
-        col1, col2 = st.columns(2)
+        if st.session_state.match_count >= 10:
+            Game.display_pause_screen(game)
+        else:
+            st.write(f"Match {st.session_state.match_count + 1} of 10")
+            st.write("Click the image you like better:")
+            col1, col2 = st.columns(2)
 
-        if 'current_image_pair' not in st.session_state:
-            st.session_state.current_image_pair = game.current_image_pair
+            with col1:
+                if st.button("Choose Image 1"):
+                    game.process_choice(st.session_state.current_image_pair[0], st.session_state.current_image_pair[1])
+            with col2:
+                if st.button("Choose Image 2"):
+                    game.process_choice(st.session_state.current_image_pair[1], st.session_state.current_image_pair[0])
+
+            col1.image(st.session_state.current_image_pair[0]['filepath'], use_column_width=True)
+            col2.image(st.session_state.current_image_pair[1]['filepath'], use_column_width=True)
+
+    @staticmethod
+    def display_pause_screen(game):
+        """Displays the pause screen with leaderboard and options to continue or view leaderboard."""
+        st.write("Level complete!")
         
+        col1, col2 = st.columns(2)
         with col1:
-            if st.button("Choose Image 1"):
-                game.process_choice(st.session_state.current_image_pair[0], st.session_state.current_image_pair[1])
+            if st.button("Continue playing"):
+                st.session_state.match_count = 0
+                Game.play_game(game)
         with col2:
-            if st.button("Choose Image 2"):
-                game.process_choice(st.session_state.current_image_pair[1], st.session_state.current_image_pair[0])
+            if st.button("View full leaderboard"):
+                Leaderboard.display_leaderboard_page()
 
-        col1.image(st.session_state.current_image_pair[0]['filepath'])
-        col2.image(st.session_state.current_image_pair[1]['filepath'])
+        st.write("Top 5 Images You Reviewed:")
+        Game.display_reviewed_leaderboard()
+    
+    @staticmethod
+    def display_reviewed_leaderboard():
+        """Displays the leaderboard of reviewed images."""
+        db = Database()
+        reviewed_images = list(st.session_state.reviewed_images)
+        if not reviewed_images:
+            st.write("No images reviewed yet.")
+            return
+        
+        placeholders = ', '.join('?' for _ in reviewed_images)
+        query = f"""
+            SELECT image_id, filepath, score, (SELECT creator_name FROM creators WHERE creator_id = images.creator_id)
+            FROM images
+            WHERE image_id IN ({placeholders})
+            ORDER BY score DESC
+            LIMIT 5
+        """
+        scores = db.conn.execute(query, reviewed_images).fetchall()
+        
+        for index, entry in enumerate(scores):
+            st.write(f"Rank {index + 1}")
+            col1, col2, col3 = st.columns([1, 3, 2])
+            col1.image(entry[1], width=50)
+            col2.write(f"Score: {entry[2]}")
+            col3.write(f"Creator: {entry[3]}")
+            st.write("---")
 
     def process_choice(self, winner, loser):
         """Process the chosen image and update the next pair."""
         self.update_image_score(winner, loser)
+        
+        # Keep track of reviewed images
+        st.session_state.reviewed_images.add(winner['image_id'])
+        st.session_state.reviewed_images.add(loser['image_id'])
+        
         # Keep the chosen image and replace the other one
         if winner == st.session_state.current_image_pair[0]:
             st.session_state.current_image_pair[1] = self.get_new_image()
@@ -109,6 +166,8 @@ class Game:
         
         if len(self.images) < 2:
             self.images = self.db.get_active_images()  # Reset images when run out
+
+        st.session_state.match_count += 1
 
     def get_new_image(self):
         """Get a new image that is not currently displayed."""
