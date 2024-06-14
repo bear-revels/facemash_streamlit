@@ -63,13 +63,15 @@ class Game:
     
     def __init__(self):
         self.db = Database()
-        self.db.refresh_active_status()  # Refresh the database status
+        self.db.refresh_active_status()
         self.images = self.db.get_active_images()
         self.current_image_pair = random.sample(self.images, 2)
         self.player_name = ""
         self.match_count = 0
         if 'reviewed_images' not in st.session_state:
             st.session_state.reviewed_images = set()
+        if 'displayed_image_ids' not in st.session_state:
+            st.session_state.displayed_image_ids = set()
         
     @staticmethod
     def display_game_page():
@@ -89,10 +91,10 @@ class Game:
     @staticmethod
     def play_game(game):
         """Main game loop to display images and capture player choices."""
-        if st.session_state.match_count >= 10:
+        if st.session_state.match_count >= 9:
             Game.display_pause_screen(game)
         else:
-            st.write(f"Match {st.session_state.match_count + 1} of 10")
+            Game.display_progress_bar(st.session_state.match_count, 9)
             st.write("Click the image you like better:")
             col1, col2 = st.columns(2)
 
@@ -105,6 +107,12 @@ class Game:
 
             col1.image(st.session_state.current_image_pair[0]['filepath'], use_column_width=True)
             col2.image(st.session_state.current_image_pair[1]['filepath'], use_column_width=True)
+    
+    @staticmethod
+    def display_progress_bar(current, total):
+        """Displays a progress bar using Streamlit's built-in method."""
+        progress_percent = ((current) / total)
+        st.progress(progress_percent)
 
     @staticmethod
     def display_pause_screen(game):
@@ -115,10 +123,11 @@ class Game:
         with col1:
             if st.button("Continue playing"):
                 st.session_state.match_count = 0
-                Game.play_game(game)
+                st.session_state.reviewed_images = set()
+                st.rerun()
         with col2:
             if st.button("View full leaderboard"):
-                Leaderboard.display_leaderboard_page()
+                st.switch_page("./pages/3_🏆_Leaderboard.py")
 
         st.write("Top 5 Images You Reviewed:")
         Game.display_reviewed_leaderboard()
@@ -160,22 +169,24 @@ class Game:
         
         # Keep the chosen image and replace the other one
         if winner == st.session_state.current_image_pair[0]:
-            st.session_state.current_image_pair[1] = self.get_new_image()
+            st.session_state.current_image_pair[1] = self.get_new_image(winner['image_id'])
         else:
-            st.session_state.current_image_pair[0] = self.get_new_image()
+            st.session_state.current_image_pair[0] = self.get_new_image(loser['image_id'])
         
         if len(self.images) < 2:
-            self.images = self.db.get_active_images()  # Reset images when run out
+            self.images = self.db.get_active_images()
 
         st.session_state.match_count += 1
 
-    def get_new_image(self):
-        """Get a new image that is not currently displayed."""
-        remaining_images = [img for img in self.images if img not in st.session_state.current_image_pair]
+    def get_new_image(self, exclude_image_id):
+        """Get a new image that is not currently displayed and not the same as the excluded image."""
+        remaining_images = [img for img in self.images if img['image_id'] not in st.session_state.displayed_image_ids and img['image_id'] != exclude_image_id]
         if not remaining_images:
-            remaining_images = self.db.get_active_images()
-            remaining_images = [img for img in remaining_images if img not in st.session_state.current_image_pair]
-        return random.choice(remaining_images)
+            st.session_state.displayed_image_ids = set()  # Reset the displayed images set
+            remaining_images = [img for img in self.images if img['image_id'] != exclude_image_id]
+        new_image = random.choice(remaining_images)
+        st.session_state.displayed_image_ids.add(new_image['image_id'])
+        return new_image
 
     def update_image_score(self, winner, loser):
         """Update the ELO score of the chosen image."""
